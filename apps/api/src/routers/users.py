@@ -183,13 +183,6 @@ async def admin_update_user_plan(
             detail="Failed to update user plan"
         )
     
-    # Log admin action
-    await user_service.log_admin_action(
-        admin_uid=get_user_id(current_user),
-        action="update_user_plan",
-        target_uid=uid,
-        details={"new_plan": request.plan_type}
-    )
     
     return {"message": f"User plan updated to {request.plan_type}"}
 
@@ -207,13 +200,6 @@ async def toggle_admin_status(
             detail="Failed to update admin status"
         )
     
-    # Log admin action
-    await user_service.log_admin_action(
-        admin_uid=get_user_id(current_user),
-        action="toggle_admin_status",
-        target_uid=uid,
-        details={"is_admin": is_admin}
-    )
     
     return {"message": f"Admin status {'granted' if is_admin else 'revoked'}"}
 
@@ -230,21 +216,4 @@ async def get_admin_stats(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve system statistics"
-        )
-
-@router.get("/admin/audit-log")
-async def get_audit_log(
-    current_user: Dict[str, Any] = Depends(require_admin),
-    limit: int = 100,
-    offset: int = 0
-):
-    """Get audit log of admin actions (admin only)"""
-    try:
-        log_entries = await user_service.get_audit_log(limit=limit, offset=offset)
-        return log_entries
-    except Exception as e:
-        logger.error(f"Error getting audit log: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve audit log"
         )
