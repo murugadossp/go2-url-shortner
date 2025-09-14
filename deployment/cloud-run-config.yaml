@@ -1,0 +1,53 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: go2-api
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/execution-environment: gen2
+    run.googleapis.com/cpu-throttling: "true"
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "100"
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/cpu-throttling: "true"
+    spec:
+      containerConcurrency: 1000
+      timeoutSeconds: 300
+      containers:
+      - image: gcr.io/PROJECT_ID/go2-api:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: ENVIRONMENT
+          value: "production"
+        - name: FIREBASE_PROJECT_ID
+          value: "go2-url-shortener"
+        - name: CORS_ORIGINS
+          value: "https://go2.video,https://go2.tools,https://go2.reviews"
+        resources:
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
