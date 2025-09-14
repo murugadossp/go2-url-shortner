@@ -58,13 +58,14 @@ async def health_check():
         }
 
 # Import and register routers
-from .routers import links, redirect, config, users, qr, analytics
+from .routers import links, redirect, config, users, qr, analytics, hooks
 app.include_router(links.router)
 app.include_router(redirect.router)
 app.include_router(config.router)
 app.include_router(users.router)
 app.include_router(qr.router)
 app.include_router(analytics.router)
+app.include_router(hooks.router)
 
 # Configure CORS
 app.add_middleware(

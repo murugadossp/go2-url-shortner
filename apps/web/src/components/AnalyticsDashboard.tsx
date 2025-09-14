@@ -35,6 +35,7 @@ import { Button } from './ui/Button';
 import { Select } from './ui/Select';
 import { GeographicAnalytics } from './GeographicAnalytics';
 import { ApiStatus } from './ApiStatus';
+import { DailyReportGenerator } from './DailyReportGenerator';
 
 interface AnalyticsDashboardProps {
   code: string;
@@ -491,6 +492,9 @@ export function AnalyticsDashboard({ code, shortUrl }: AnalyticsDashboardProps) 
         stats={stats.geographic_stats} 
         totalClicks={stats.total_clicks} 
       />
+
+      {/* Daily Report Generation */}
+      <DailyReportGenerator code={code} />
 
       {/* No Data State */}
       {stats.total_clicks === 0 && (
