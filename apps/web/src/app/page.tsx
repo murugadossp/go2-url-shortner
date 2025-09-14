@@ -5,16 +5,15 @@ import { LinkCreator } from '@/components/LinkCreator';
 import { LinkDisplay } from '@/components/LinkDisplay';
 import { AnalyticsDashboard } from '@/components/AnalyticsDashboard';
 import { AuthButton } from '@/components/AuthButton';
-import { UserDashboard } from '@/components/UserDashboard';
 import { AdminNavButton } from '@/components/AdminNavButton';
 import { type CreateLinkResponse } from '@shared/types/link';
 import { Button } from '@/components/ui/Button';
 import { ToastContainer, useToast } from '@/components/ui/Toast';
-import { ArrowLeft, Link as LinkIcon, User } from 'lucide-react';
+import { ArrowLeft, Link as LinkIcon } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Navigation } from '@/components/Navigation';
 
-type ViewMode = 'create' | 'display' | 'analytics' | 'dashboard';
+type ViewMode = 'create' | 'display' | 'analytics';
 
 export default function Home() {
   const [viewMode, setViewMode] = useState<ViewMode>('create');
@@ -42,10 +41,6 @@ export default function Home() {
   const handleBackToDisplay = () => {
     setViewMode('display');
     setAnalyticsCode('');
-  };
-
-  const handleViewDashboard = () => {
-    setViewMode('dashboard');
   };
 
   return (
@@ -101,19 +96,6 @@ export default function Home() {
                     Create New Link
                   </Button>
                 </div>
-              )}
-              
-              {/* User Dashboard button (only show when authenticated) */}
-              {user && viewMode !== 'dashboard' && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleViewDashboard}
-                  className="text-gray-700 hover:text-gray-900"
-                >
-                  <User className="h-4 w-4 mr-2" />
-                  Dashboard
-                </Button>
               )}
               
               {/* Admin button (only show for admin users) */}
@@ -198,10 +180,6 @@ export default function Home() {
             code={analyticsCode}
             shortUrl={currentLink?.short_url}
           />
-        )}
-
-        {viewMode === 'dashboard' && (
-          <UserDashboard />
         )}
       </main>
 
