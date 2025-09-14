@@ -35,8 +35,10 @@ interface SystemStats {
   engagement: {
     total_clicks: number;
     avg_clicks_per_link: number;
+    estimated?: boolean;
   };
   last_updated: string;
+  errors?: string[];
 }
 
 interface AdminDashboardProps {
@@ -59,11 +61,12 @@ export function AdminDashboard({ activeTab, onTabChange }: AdminDashboardProps) 
     
     setIsLoading(true);
     try {
-      const response = await apiClient.get('/api/users/admin/stats/overview') as { data: SystemStats };
-      setStats(response.data);
+      const response = await apiClient.get('/api/users/admin/stats/overview') as SystemStats;
+      setStats(response);
     } catch (error) {
       console.error('Failed to load admin stats:', error);
       toast.error('Failed to load statistics', 'Please try again later.');
+      setStats(null);
     } finally {
       setIsLoading(false);
     }
@@ -97,6 +100,26 @@ export function AdminDashboard({ activeTab, onTabChange }: AdminDashboardProps) 
             </div>
           ) : stats ? (
             <>
+              {/* Warning banner for partial errors */}
+              {stats.errors && stats.errors.length > 0 && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <div className="flex">
+                    <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0 mr-3 mt-0.5" />
+                    <div>
+                      <h3 className="text-sm font-medium text-yellow-800">Partial Data Warning</h3>
+                      <p className="text-sm text-yellow-700 mt-1">
+                        Some statistics couldn't be loaded completely due to database indexing. Showing available data.
+                      </p>
+                      {stats.engagement.estimated && (
+                        <p className="text-xs text-yellow-600 mt-1">
+                          * Click statistics are estimated based on sample data
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Stats Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {/* Total Users */}

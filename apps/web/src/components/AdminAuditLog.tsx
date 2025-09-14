@@ -28,6 +28,16 @@ interface AuditLogEntry {
   details: Record<string, any>;
   timestamp: string;
   ip_address?: string;
+  admin_info?: {
+    uid: string;
+    email: string;
+    display_name: string;
+  };
+  target_info?: {
+    uid: string;
+    email: string;
+    display_name: string;
+  };
 }
 
 const actionLabels: Record<string, string> = {
@@ -83,11 +93,12 @@ export function AdminAuditLog() {
     
     setIsLoading(true);
     try {
-      const response = await apiClient.get('/api/users/admin/audit-log?limit=100') as { data: AuditLogEntry[] };
-      setAuditLog(response.data);
+      const response = await apiClient.get('/api/users/admin/audit-log?limit=100') as AuditLogEntry[];
+      setAuditLog(response);
     } catch (error) {
       console.error('Failed to load audit log:', error);
       toast.error('Failed to load audit log', 'Please try again later.');
+      setAuditLog([]);
     } finally {
       setIsLoading(false);
     }
@@ -235,12 +246,20 @@ export function AdminAuditLog() {
                       <div className="mt-3 flex items-center space-x-6 text-sm text-gray-500">
                         <div className="flex items-center">
                           <User className="w-4 h-4 mr-1" />
-                          <span>Admin: {entry.admin_uid}</span>
+                          <span>
+                            Admin: {entry.admin_info ? 
+                              `${entry.admin_info.display_name} (${entry.admin_info.email})` : 
+                              entry.admin_uid}
+                          </span>
                         </div>
                         {entry.target_uid && (
                           <div className="flex items-center">
                             <User className="w-4 h-4 mr-1" />
-                            <span>Target: {entry.target_uid}</span>
+                            <span>
+                              Target: {entry.target_info ? 
+                                `${entry.target_info.display_name} (${entry.target_info.email})` : 
+                                entry.target_uid}
+                            </span>
                           </div>
                         )}
                         {entry.ip_address && (

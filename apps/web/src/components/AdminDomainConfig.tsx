@@ -67,8 +67,8 @@ export function AdminDomainConfig() {
     
     setIsLoading(true);
     try {
-      const response = await apiClient.get('/api/config/admin/domains') as { data: DomainConfig };
-      const configData = response.data;
+      const response = await apiClient.get('/api/config/admin/domains') as DomainConfig;
+      const configData = response;
       setConfig(configData);
       
       // Convert domain_suggestions object to array for form
