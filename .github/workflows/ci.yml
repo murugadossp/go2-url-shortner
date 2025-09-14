@@ -1,0 +1,401 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Backend Tests
+  backend-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('apps/api/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install Python dependencies
+      working-directory: apps/api
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest-cov pytest-xdist
+    
+    - name: Run backend unit tests
+      working-directory: apps/api
+      run: |
+        pytest --cov=src --cov-report=xml --cov-report=html -n auto
+    
+    - name: Upload backend coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: apps/api/coverage.xml
+        flags: backend
+        name: backend-coverage
+    
+    - name: Archive backend coverage report
+      uses: actions/upload-artifact@v3
+      with:
+        name: backend-coverage-report
+        path: apps/api/htmlcov/
+
+  # Frontend Tests
+  frontend-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: apps/web/package-lock.json
+    
+    - name: Install frontend dependencies
+      working-directory: apps/web
+      run: npm ci
+    
+    - name: Run frontend unit tests
+      working-directory: apps/web
+      run: npm run test:coverage
+    
+    - name: Upload frontend coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: apps/web/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+    
+    - name: Archive frontend coverage report
+      uses: actions/upload-artifact@v3
+      with:
+        name: frontend-coverage-report
+        path: apps/web/coverage/
+
+  # Shared Package Tests
+  shared-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: packages/shared/package-lock.json
+    
+    - name: Install shared package dependencies
+      working-directory: packages/shared
+      run: npm ci
+    
+    - name: Run shared package tests
+      working-directory: packages/shared
+      run: npm test
+
+  # E2E Tests
+  e2e-tests:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: apps/web/package-lock.json
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        # Install frontend dependencies
+        cd apps/web && npm ci
+        
+        # Install backend dependencies
+        cd ../api
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Install Playwright browsers
+      working-directory: apps/web
+      run: npx playwright install --with-deps
+    
+    - name: Start backend server
+      working-directory: apps/api
+      run: |
+        uvicorn src.main:app --host 0.0.0.0 --port 8000 &
+        echo $! > backend.pid
+      env:
+        ENVIRONMENT: test
+        FIREBASE_PROJECT_ID: test-project
+        DISABLE_AUTH: true
+    
+    - name: Wait for backend to be ready
+      run: |
+        timeout 30 bash -c 'until curl -f http://localhost:8000/health; do sleep 1; done'
+    
+    - name: Run E2E tests
+      working-directory: apps/web
+      run: npx playwright test
+      env:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        CI: true
+    
+    - name: Upload E2E test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: playwright-report
+        path: apps/web/playwright-report/
+        retention-days: 30
+    
+    - name: Stop backend server
+      if: always()
+      working-directory: apps/api
+      run: |
+        if [ -f backend.pid ]; then
+          kill $(cat backend.pid) || true
+          rm backend.pid
+        fi
+
+  # Accessibility Tests
+  accessibility-tests:
+    runs-on: ubuntu-latest
+    needs: [frontend-tests]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: apps/web/package-lock.json
+    
+    - name: Install dependencies
+      working-directory: apps/web
+      run: npm ci
+    
+    - name: Install Playwright browsers
+      working-directory: apps/web
+      run: npx playwright install --with-deps
+    
+    - name: Run accessibility tests
+      working-directory: apps/web
+      run: npx playwright test accessibility.spec.ts
+    
+    - name: Upload accessibility test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: accessibility-report
+        path: apps/web/playwright-report/
+        retention-days: 30
+
+  # Security Scanning
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Code Quality
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: apps/web/package-lock.json
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install frontend dependencies
+      working-directory: apps/web
+      run: npm ci
+    
+    - name: Install Python dependencies
+      working-directory: apps/api
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install black isort flake8 mypy
+    
+    - name: Run frontend linting
+      working-directory: apps/web
+      run: npm run lint
+    
+    - name: Run Python code formatting check
+      working-directory: apps/api
+      run: |
+        black --check src/ tests/
+        isort --check-only src/ tests/
+    
+    - name: Run Python linting
+      working-directory: apps/api
+      run: flake8 src/ tests/
+    
+    - name: Run Python type checking
+      working-directory: apps/api
+      run: mypy src/
+
+  # Performance Tests
+  performance-tests:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      working-directory: apps/api
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install locust
+    
+    - name: Run performance tests
+      working-directory: apps/api
+      run: |
+        # Start the API server
+        uvicorn src.main:app --host 0.0.0.0 --port 8000 &
+        SERVER_PID=$!
+        
+        # Wait for server to start
+        sleep 10
+        
+        # Run load tests
+        locust -f tests/performance/locustfile.py --host=http://localhost:8000 \
+               --users=50 --spawn-rate=5 --run-time=60s --headless \
+               --html=performance-report.html
+        
+        # Stop server
+        kill $SERVER_PID
+      env:
+        ENVIRONMENT: test
+        FIREBASE_PROJECT_ID: test-project
+        DISABLE_AUTH: true
+    
+    - name: Upload performance report
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-report
+        path: apps/api/performance-report.html
+
+  # Build and Deploy (only on main branch)
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests, e2e-tests, accessibility-tests, code-quality]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: apps/web/package-lock.json
+    
+    - name: Install frontend dependencies
+      working-directory: apps/web
+      run: npm ci
+    
+    - name: Build frontend
+      working-directory: apps/web
+      run: npm run build
+      env:
+        NEXT_PUBLIC_API_URL: ${{ secrets.PRODUCTION_API_URL }}
+        NEXT_PUBLIC_FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+    
+    - name: Build Docker image for API
+      working-directory: apps/api
+      run: |
+        docker build -t go2-api:${{ github.sha }} .
+        docker tag go2-api:${{ github.sha }} go2-api:latest
+    
+    # Add deployment steps here based on your deployment strategy
+    # For example, deploy to Google Cloud Run, AWS ECS, etc.
+    
+    - name: Archive production artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: production-build
+        path: |
+          apps/web/.next/
+          apps/api/Dockerfile
+
+  # Notification
+  notify:
+    runs-on: ubuntu-latest
+    needs: [build-and-deploy]
+    if: always()
+    
+    steps:
+    - name: Notify on success
+      if: needs.build-and-deploy.result == 'success'
+      run: |
+        echo "✅ All tests passed and deployment successful!"
+        # Add notification logic (Slack, Discord, etc.)
+    
+    - name: Notify on failure
+      if: needs.build-and-deploy.result == 'failure'
+      run: |
+        echo "❌ Tests failed or deployment unsuccessful!"
+        # Add notification logic (Slack, Discord, etc.)

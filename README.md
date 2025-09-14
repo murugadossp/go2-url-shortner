@@ -77,9 +77,39 @@ npm run build
 
 ### Testing
 
+#### Quick Test Execution
+
 ```bash
-npm run test
+# Run all tests
+./scripts/run-tests.sh
+
+# Run tests with coverage
+./scripts/run-tests.sh --coverage-only
+
+# Skip slow tests (E2E and performance)
+./scripts/run-tests.sh --skip-e2e --skip-performance
 ```
+
+#### Individual Test Categories
+
+```bash
+# Backend tests
+cd apps/api && pytest
+
+# Frontend tests  
+cd apps/web && npm test
+
+# E2E tests
+cd apps/web && npm run test:e2e
+
+# Accessibility tests
+cd apps/web && npm run test:accessibility
+
+# Performance tests
+cd apps/api && locust -f tests/performance/locustfile.py --host=http://localhost:8000
+```
+
+For detailed testing instructions, see [TEST_EXECUTION_GUIDE.md](./TEST_EXECUTION_GUIDE.md)
 
 ## Features
 
