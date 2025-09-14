@@ -240,100 +240,155 @@ class UserService:
             return False
     
     async def get_system_stats(self) -> Dict[str, Any]:
-        """Get system-wide statistics"""
+        """Get system-wide statistics with robust error handling"""
+        stats = {
+            'users': {
+                'total': 0,
+                'free': 0,
+                'paid': 0,
+                'admin': 0,
+                'recent_signups': 0
+            },
+            'links': {
+                'total': 0,
+                'custom_codes': 0,
+                'disabled': 0,
+                'recent_created': 0
+            },
+            'engagement': {
+                'total_clicks': 0,
+                'avg_clicks_per_link': 0
+            },
+            'last_updated': datetime.utcnow().isoformat(),
+            'errors': []
+        }
+        
+        # Get user statistics
         try:
-            # User statistics
             users_query = self.users_collection
             all_users = users_query.get()
             
-            total_users = len(all_users)
-            free_users = sum(1 for user in all_users if user.to_dict().get('plan_type') == 'free')
-            paid_users = total_users - free_users
-            admin_users = sum(1 for user in all_users if user.to_dict().get('is_admin', False))
+            stats['users']['total'] = len(all_users)
+            stats['users']['free'] = sum(1 for user in all_users if user.to_dict().get('plan_type') == 'free')
+            stats['users']['paid'] = stats['users']['total'] - stats['users']['free']
+            stats['users']['admin'] = sum(1 for user in all_users if user.to_dict().get('is_admin', False))
             
-            # Link statistics
-            from google.cloud.firestore import FieldFilter
-            links_collection = self.db.collection('links')
-            all_links = links_collection.get()
-            
-            total_links = len(all_links)
-            custom_code_links = sum(1 for link in all_links if link.to_dict().get('is_custom_code', False))
-            disabled_links = sum(1 for link in all_links if link.to_dict().get('disabled', False))
-            
-            # Calculate total clicks
-            total_clicks = 0
-            for link in all_links:
-                clicks_collection = link.reference.collection('clicks')
-                clicks = clicks_collection.get()
-                total_clicks += len(clicks)
-            
-            # Recent activity (last 7 days)
+            # Recent activity (last 7 days) with safe date comparison
             seven_days_ago = datetime.utcnow() - timedelta(days=7)
-            recent_users = sum(1 for user in all_users 
-                             if user.to_dict().get('created_at', datetime.min) > seven_days_ago)
-            recent_links = sum(1 for link in all_links 
-                             if link.to_dict().get('created_at', datetime.min) > seven_days_ago)
+            recent_signups = 0
+            for user in all_users:
+                user_data = user.to_dict()
+                created_at = user_data.get('created_at')
+                if created_at:
+                    # Handle both datetime objects and ISO string formats
+                    if isinstance(created_at, str):
+                        try:
+                            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        except (ValueError, AttributeError):
+                            continue
+                    elif hasattr(created_at, 'timestamp'):  # Firestore timestamp
+                        created_at = created_at
+                    
+                    if isinstance(created_at, datetime) and created_at > seven_days_ago:
+                        recent_signups += 1
             
-            return {
-                'users': {
-                    'total': total_users,
-                    'free': free_users,
-                    'paid': paid_users,
-                    'admin': admin_users,
-                    'recent_signups': recent_users
-                },
-                'links': {
-                    'total': total_links,
-                    'custom_codes': custom_code_links,
-                    'disabled': disabled_links,
-                    'recent_created': recent_links
-                },
-                'engagement': {
-                    'total_clicks': total_clicks,
-                    'avg_clicks_per_link': round(total_clicks / max(total_links, 1), 2)
-                },
-                'last_updated': datetime.utcnow().isoformat()
-            }
+            stats['users']['recent_signups'] = recent_signups
         except Exception as e:
-            logger.error(f"Error getting system stats: {e}")
-            return {}
-    
-    async def log_admin_action(self, admin_uid: str, action: str, target_uid: str = None, details: Dict[str, Any] = None):
-        """Log administrative actions for audit trail"""
+            logger.error(f"Error getting user stats: {e}")
+            stats['errors'].append(f"User statistics unavailable: {str(e)}")
+        
+        # Get link statistics (simplified to avoid index issues)
         try:
-            audit_entry = {
-                'admin_uid': admin_uid,
-                'action': action,
-                'target_uid': target_uid,
-                'details': details or {},
-                'timestamp': datetime.utcnow(),
-                'ip_address': None  # Could be passed from request context
-            }
+            # Use simple queries that don't require composite indexes
+            links_collection = self.db.collection('links')
             
-            self.audit_collection.add(audit_entry)
+            # Basic count
+            all_links = links_collection.get()
+            stats['links']['total'] = len(all_links)
+            
+            # Count different types
+            custom_code_links = 0
+            disabled_links = 0
+            recent_links = 0
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            
+            for link in all_links:
+                link_data = link.to_dict()
+                if link_data.get('is_custom_code', False):
+                    custom_code_links += 1
+                if link_data.get('disabled', False):
+                    disabled_links += 1
+                
+                # Safe date comparison for recent links
+                created_at = link_data.get('created_at')
+                if created_at:
+                    # Handle both datetime objects and ISO string formats
+                    if isinstance(created_at, str):
+                        try:
+                            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        except (ValueError, AttributeError):
+                            continue
+                    elif hasattr(created_at, 'timestamp'):  # Firestore timestamp
+                        created_at = created_at
+                    
+                    if isinstance(created_at, datetime) and created_at > seven_days_ago:
+                        recent_links += 1
+            
+            stats['links']['custom_codes'] = custom_code_links
+            stats['links']['disabled'] = disabled_links
+            stats['links']['recent_created'] = recent_links
+            
         except Exception as e:
-            logger.error(f"Error logging admin action: {e}")
-    
-    async def get_audit_log(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
-        """Get audit log entries"""
+            logger.error(f"Error getting link stats: {e}")
+            stats['errors'].append(f"Link statistics unavailable: {str(e)}")
+        
+        # Get engagement statistics (with better error handling)
         try:
-            audit_query = (self.audit_collection
-                          .order_by('timestamp', direction='DESCENDING')
-                          .limit(limit)
-                          .offset(offset))
+            total_clicks = 0
+            links_with_clicks = 0
             
-            audit_docs = audit_query.get()
+            # Sample a subset of links for click counting to avoid timeout
+            links_collection = self.db.collection('links')
+            sample_links = links_collection.limit(100).get()  # Sample first 100 links
             
-            audit_entries = []
-            for doc in audit_docs:
-                entry = doc.to_dict()
-                entry['id'] = doc.id
-                audit_entries.append(entry)
+            for link in sample_links:
+                try:
+                    clicks_collection = link.reference.collection('clicks')
+                    clicks = clicks_collection.get()
+                    click_count = len(clicks)
+                    if click_count > 0:
+                        total_clicks += click_count
+                        links_with_clicks += 1
+                except Exception as e:
+                    # Skip this link if clicks can't be counted
+                    logger.debug(f"Skipping click count for link {link.id}: {e}")
+                    continue
             
-            return audit_entries
+            stats['engagement']['total_clicks'] = total_clicks
+            if stats['links']['total'] > 0:
+                # Estimate total clicks based on sample
+                if len(sample_links) < stats['links']['total']:
+                    # Extrapolate from sample
+                    sample_ratio = len(sample_links) / stats['links']['total']
+                    estimated_total_clicks = int(total_clicks / sample_ratio) if sample_ratio > 0 else 0
+                    stats['engagement']['total_clicks'] = estimated_total_clicks
+                    stats['engagement']['estimated'] = True
+                
+                stats['engagement']['avg_clicks_per_link'] = round(
+                    stats['engagement']['total_clicks'] / max(stats['links']['total'], 1), 2
+                )
+            
         except Exception as e:
-            logger.error(f"Error getting audit log: {e}")
-            return []
+            logger.error(f"Error getting engagement stats: {e}")
+            stats['errors'].append(f"Engagement statistics unavailable: {str(e)}")
+        
+        # Remove errors field if no errors occurred
+        if not stats['errors']:
+            del stats['errors']
+        
+        logger.info(f"System stats generated successfully with {len(stats.get('errors', []))} errors")
+        return stats
+    
 
 # Global instance
 user_service = UserService()

@@ -4,7 +4,6 @@ import React, { useState } from 'react';
 import { AdminDashboard } from '@/components/AdminDashboard';
 import { AdminUserManagement } from '@/components/AdminUserManagement';
 import { AdminLinkManagement } from '@/components/AdminLinkManagement';
-import { AdminAuditLog } from '@/components/AdminAuditLog';
 import { AdminDomainConfig } from '@/components/AdminDomainConfig';
 import { AuthButton } from '@/components/AuthButton';
 import { Button } from '@/components/ui/Button';
@@ -19,7 +18,6 @@ export default function AdminPage() {
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'links', label: 'Links', icon: LinkIcon },
-    { id: 'audit', label: 'Audit Log', icon: Shield },
     { id: 'config', label: 'Configuration', icon: Settings }
   ];
 
@@ -31,8 +29,6 @@ export default function AdminPage() {
         return <AdminUserManagement />;
       case 'links':
         return <AdminLinkManagement />;
-      case 'audit':
-        return <AdminAuditLog />;
       case 'config':
         return <AdminDomainConfig />;
       default:
