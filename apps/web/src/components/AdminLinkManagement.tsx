@@ -59,11 +59,12 @@ export function AdminLinkManagement() {
     
     setIsLoading(true);
     try {
-      const response = await apiClient.get('/api/links/admin/all?limit=100') as { data: LinkData[] };
-      setLinks(response.data);
+      const response = await apiClient.get('/api/links/admin/all?limit=100') as LinkData[];
+      setLinks(response);
     } catch (error) {
       console.error('Failed to load links:', error);
       toast.error('Failed to load links', 'Please try again later.');
+      setLinks([]);
     } finally {
       setIsLoading(false);
     }
@@ -96,10 +97,10 @@ export function AdminLinkManagement() {
     try {
       const codes = Array.from(selectedLinks);
       const response = await apiClient.post('/api/links/admin/bulk-disable', codes) as {
-        data: { disabled_count: number; errors: string[] }
+        disabled_count: number; errors: string[]
       };
       
-      const { disabled_count, errors } = response.data;
+      const { disabled_count, errors } = response;
       
       if (errors && errors.length > 0) {
         toast.error(`Disabled ${disabled_count} links`, `${errors.length} errors occurred.`);
@@ -131,10 +132,10 @@ export function AdminLinkManagement() {
     try {
       const codes = Array.from(selectedLinks);
       const response = await apiClient.post('/api/links/admin/bulk-delete', codes) as {
-        data: { deleted_count: number; errors: string[] }
+        deleted_count: number; errors: string[]
       };
       
-      const { deleted_count, errors } = response.data;
+      const { deleted_count, errors } = response;
       
       if (errors && errors.length > 0) {
         toast.error(`Deleted ${deleted_count} links`, `${errors.length} errors occurred.`);
@@ -163,10 +164,10 @@ export function AdminLinkManagement() {
         codes,
         expires_at: expiryDate?.toISOString() || null
       }) as {
-        data: { updated_count: number; errors: string[] }
+        updated_count: number; errors: string[]
       };
       
-      const { updated_count, errors } = response.data;
+      const { updated_count, errors } = response;
       
       if (errors && errors.length > 0) {
         toast.error(`Updated ${updated_count} links`, `${errors.length} errors occurred.`);
@@ -513,7 +514,7 @@ export function AdminLinkManagement() {
             </div>
             <div>
               <div className="text-2xl font-bold text-purple-600">
-                {links.reduce((sum, l) => sum + l.click_count, 0)}
+                {links.reduce((sum, l) => sum + (l.click_count || 0), 0)}
               </div>
               <div className="text-sm text-gray-600">Total Clicks</div>
             </div>

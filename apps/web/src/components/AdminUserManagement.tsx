@@ -49,11 +49,12 @@ export function AdminUserManagement() {
     
     setIsLoading(true);
     try {
-      const response = await apiClient.get('/api/users/admin/all?limit=100') as { data: UserProfile[] };
-      setUsers(response.data);
+      const response = await apiClient.get('/api/users/admin/all?limit=100') as UserProfile[];
+      setUsers(response);
     } catch (error) {
       console.error('Failed to load users:', error);
       toast.error('Failed to load users', 'Please try again later.');
+      setUsers([]);
     } finally {
       setIsLoading(false);
     }
