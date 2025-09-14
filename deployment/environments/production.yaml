@@ -1,0 +1,265 @@
+# Production Environment Configuration for Go2 URL Shortener
+
+environment:
+  name: production
+  region: asia-south1
+  project_id: go2-url-shortener
+
+# Domain configuration
+domains:
+  primary:
+    - go2.video
+    - go2.tools
+    - go2.reviews
+  aliases:
+    - www.go2.video
+    - www.go2.tools
+    - www.go2.reviews
+
+# Cloud Run configuration
+cloud_run:
+  service_name: go2-api
+  image: gcr.io/go2-url-shortener/go2-api:latest
+  region: asia-south1
+  
+  # Resource allocation
+  resources:
+    cpu: "2"
+    memory: "2Gi"
+    
+  # Scaling configuration
+  scaling:
+    min_instances: 0
+    max_instances: 100
+    concurrency: 1000
+    
+  # Service configuration
+  service:
+    port: 8080
+    timeout: 300
+    allow_unauthenticated: true
+    service_account: go2-api-sa@go2-url-shortener.iam.gserviceaccount.com
+    
+  # Environment variables
+  env_vars:
+    ENVIRONMENT: production
+    FIREBASE_PROJECT_ID: go2-url-shortener
+    CORS_ORIGINS: "https://go2.video,https://go2.tools,https://go2.reviews"
+    LOG_LEVEL: INFO
+    RATE_LIMIT_ENABLED: "true"
+    RATE_LIMIT_REQUESTS: "100"
+    RATE_LIMIT_WINDOW: "60"
+    
+  # Secrets (from Secret Manager)
+  secrets:
+    FIREBASE_SERVICE_ACCOUNT_JSON: firebase-service-account:latest
+    GOOGLE_SAFE_BROWSING_API_KEY: safe-browsing-api-key:latest
+    SENDGRID_API_KEY: sendgrid-api-key:latest
+
+# Firebase Hosting configuration
+firebase_hosting:
+  project_id: go2-url-shortener
+  public_dir: apps/web/out
+  
+  # Hosting configuration
+  hosting:
+    rewrites:
+      - source: "/api/**"
+        destination: "https://go2-api-asia-south1-run.app/api"
+      - source: "**"
+        destination: "/index.html"
+        
+    headers:
+      - source: "**/*.@(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)"
+        headers:
+          - key: "Cache-Control"
+            value: "public, max-age=31536000, immutable"
+      - source: "**"
+        headers:
+          - key: "X-Content-Type-Options"
+            value: "nosniff"
+          - key: "X-Frame-Options"
+            value: "DENY"
+          - key: "X-XSS-Protection"
+            value: "1; mode=block"
+          - key: "Referrer-Policy"
+            value: "strict-origin-when-cross-origin"
+
+# Load Balancer configuration
+load_balancer:
+  name: go2-lb
+  static_ip: go2-ip
+  
+  # SSL configuration
+  ssl:
+    certificate_name: go2-ssl-cert
+    domains:
+      - go2.video
+      - go2.tools
+      - go2.reviews
+      - www.go2.video
+      - www.go2.tools
+      - www.go2.reviews
+      
+  # Backend service
+  backend_service:
+    name: go2-backend
+    enable_cdn: true
+    cache_mode: CACHE_ALL_STATIC
+    default_ttl: 3600
+    max_ttl: 86400
+    
+  # Security policy
+  security_policy:
+    name: go2-security-policy
+    rate_limit:
+      requests_per_minute: 100
+      ban_duration_seconds: 600
+
+# Monitoring configuration
+monitoring:
+  # Dashboards
+  dashboards:
+    - name: go2-overview
+      display_name: "Go2 URL Shortener - Overview"
+    - name: go2-business
+      display_name: "Go2 URL Shortener - Business Metrics"
+      
+  # Log-based metrics
+  log_metrics:
+    - name: link_created
+      description: "Count of links created"
+      filter: 'resource.type="cloud_run_revision" "link created successfully"'
+    - name: redirect_served
+      description: "Count of redirects served"
+      filter: 'resource.type="cloud_run_revision" "redirect successful"'
+    - name: safety_violations
+      description: "Count of safety violations"
+      filter: 'resource.type="cloud_run_revision" "safety violation"'
+    - name: qr_generated
+      description: "Count of QR codes generated"
+      filter: 'resource.type="cloud_run_revision" "QR code generated"'
+      
+  # Alerting policies
+  alerts:
+    - name: high_error_rate
+      condition: "Error rate > 5%"
+      threshold: 0.05
+      duration: 300
+    - name: high_latency
+      condition: "95th percentile latency > 2s"
+      threshold: 2000
+      duration: 300
+    - name: low_availability
+      condition: "Availability < 99%"
+      threshold: 0.99
+      duration: 600
+      
+  # Uptime checks
+  uptime_checks:
+    - name: go2-video-health
+      url: https://go2.video/health
+      period: 60
+      timeout: 10
+    - name: go2-tools-health
+      url: https://go2.tools/health
+      period: 60
+      timeout: 10
+    - name: go2-reviews-health
+      url: https://go2.reviews/health
+      period: 60
+      timeout: 10
+
+# Security configuration
+security:
+  # Service account
+  service_account:
+    name: go2-api-sa
+    display_name: "Go2 API Service Account"
+    roles:
+      - roles/secretmanager.secretAccessor
+      - roles/datastore.user
+      - roles/storage.objectViewer
+      - roles/monitoring.metricWriter
+      - roles/logging.logWriter
+      
+  # Secrets
+  secrets:
+    - name: firebase-service-account
+      description: "Firebase service account key"
+    - name: safe-browsing-api-key
+      description: "Google Safe Browsing API key"
+    - name: sendgrid-api-key
+      description: "SendGrid API key for email notifications"
+      
+  # Cloud Armor rules
+  armor_rules:
+    - priority: 1000
+      action: rate_based_ban
+      rate_limit:
+        requests: 100
+        interval: 60
+        ban_duration: 600
+    - priority: 2000
+      action: deny_403
+      expression: "request.path.matches('(?i)\\.(php|asp|aspx|jsp)$')"
+
+# Performance configuration
+performance:
+  # CDN settings
+  cdn:
+    enable: true
+    cache_modes:
+      static_assets: 31536000  # 1 year
+      api_responses: 300       # 5 minutes
+      qr_codes: 86400         # 24 hours
+      health_checks: 0        # No cache
+      redirects: 300          # 5 minutes
+      
+  # Optimization settings
+  optimization:
+    compression: true
+    minification: true
+    image_optimization: true
+    
+# Backup and disaster recovery
+backup:
+  # Firestore backup
+  firestore:
+    enable_automatic_backup: true
+    retention_days: 30
+    
+  # Export schedule
+  export:
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    destination: gs://go2-backups/firestore/
+    
+# Cost optimization
+cost_optimization:
+  # Cloud Run
+  cloud_run:
+    cpu_throttling: true
+    min_instances: 0
+    
+  # Monitoring
+  monitoring:
+    log_retention_days: 30
+    metric_retention_days: 90
+    
+# Compliance and governance
+compliance:
+  # Data retention
+  data_retention:
+    expired_links: 90  # days
+    click_data: 365    # days
+    user_data: 2555    # days (7 years)
+    
+  # Audit logging
+  audit_logging:
+    enable: true
+    retention_days: 365
+    
+  # Access control
+  access_control:
+    require_mfa: true
+    session_timeout: 3600  # seconds

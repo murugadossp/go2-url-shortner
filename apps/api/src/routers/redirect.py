@@ -1,6 +1,7 @@
 """
 Redirect router for handling short URL redirects.
 Handles /{code} redirects with click tracking, password protection, and error handling.
+Uses composite document IDs to support same codes across different domains.
 """
 
 import logging
@@ -13,6 +14,7 @@ from passlib.hash import bcrypt
 
 from ..services.firebase_service import firebase_service
 from ..services.analytics_service import analytics_service
+from ..utils.domain_utils import get_base_domain_from_request, get_composite_document_id
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,9 @@ def get_client_ip(request: Request) -> Optional[str]:
         return request.client.host
     
     return None
+
+
+
 
 
 def get_password_form_html(code: str, error: Optional[str] = None) -> str:
@@ -221,13 +226,22 @@ async def redirect_to_long_url(code: str, request: Request):
     """
     Handle GET requests to /{code} - redirect to original URL or show password form.
     Implements click tracking, password protection, and error handling.
+    Uses composite document IDs to support same codes across different domains.
     """
     try:
-        # Get link document
-        link_ref = firebase_service.db.collection('links').document(code)
+        # Extract domain from request host header and create composite document ID
+        host = request.headers.get('host', '')
+        base_domain = get_base_domain_from_host(host)
+        document_id = get_composite_document_id(base_domain, code)
+        
+        logger.info(f"Redirect request: {host}/{code} -> document_id: {document_id}")
+        
+        # Get link document using composite ID
+        link_ref = firebase_service.db.collection('links').document(document_id)
         link_doc = link_ref.get()
         
         if not link_doc.exists:
+            logger.warning(f"Link not found: {document_id}")
             return HTMLResponse(
                 content=get_error_page_html(
                     "Link Not Found",
@@ -241,6 +255,7 @@ async def redirect_to_long_url(code: str, request: Request):
         
         # Check if link is disabled
         if link_data.get('disabled', False):
+            logger.info(f"Link disabled: {document_id}")
             return HTMLResponse(
                 content=get_error_page_html(
                     "Link Disabled",
@@ -253,6 +268,7 @@ async def redirect_to_long_url(code: str, request: Request):
         # Check if link is expired
         expires_at = link_data.get('expires_at')
         if expires_at and datetime.utcnow() > expires_at:
+            logger.info(f"Link expired: {document_id}")
             return HTMLResponse(
                 content=get_error_page_html(
                     "Link Expired",
@@ -276,14 +292,16 @@ async def redirect_to_long_url(code: str, request: Request):
         user_agent = request.headers.get('User-Agent')
         referrer = request.headers.get('Referer')
         
-        # Fire and forget click logging
+        # Fire and forget click logging (use composite document_id)
         import asyncio
         asyncio.create_task(analytics_service.log_click(
-            code=code,
+            code=document_id,  # Use composite ID for analytics
             ip=client_ip,
             user_agent=user_agent,
             referrer=referrer
         ))
+        
+        logger.info(f"Redirecting {document_id} to {link_data['long_url']}")
         
         # Redirect to original URL
         return RedirectResponse(
@@ -308,13 +326,22 @@ async def redirect_with_password(code: str, request: Request, password: str = Fo
     """
     Handle POST requests to /{code} - verify password and redirect.
     Used for password-protected links.
+    Uses composite document IDs to support same codes across different domains.
     """
     try:
-        # Get link document
-        link_ref = firebase_service.db.collection('links').document(code)
+        # Extract domain from request host header and create composite document ID
+        host = request.headers.get('host', '')
+        base_domain = get_base_domain_from_host(host)
+        document_id = get_composite_document_id(base_domain, code)
+        
+        logger.info(f"Password redirect request: {host}/{code} -> document_id: {document_id}")
+        
+        # Get link document using composite ID
+        link_ref = firebase_service.db.collection('links').document(document_id)
         link_doc = link_ref.get()
         
         if not link_doc.exists:
+            logger.warning(f"Link not found: {document_id}")
             return HTMLResponse(
                 content=get_error_page_html(
                     "Link Not Found",
@@ -328,6 +355,7 @@ async def redirect_with_password(code: str, request: Request, password: str = Fo
         
         # Check if link is disabled
         if link_data.get('disabled', False):
+            logger.info(f"Link disabled: {document_id}")
             return HTMLResponse(
                 content=get_error_page_html(
                     "Link Disabled",
@@ -340,6 +368,7 @@ async def redirect_with_password(code: str, request: Request, password: str = Fo
         # Check if link is expired
         expires_at = link_data.get('expires_at')
         if expires_at and datetime.utcnow() > expires_at:
+            logger.info(f"Link expired: {document_id}")
             return HTMLResponse(
                 content=get_error_page_html(
                     "Link Expired",
@@ -356,6 +385,7 @@ async def redirect_with_password(code: str, request: Request, password: str = Fo
             pass
         elif not verify_password(password, password_hash):
             # Wrong password, show form with error
+            logger.warning(f"Wrong password for {document_id}")
             return HTMLResponse(
                 content=get_password_form_html(code, "Incorrect password. Please try again."),
                 status_code=401
@@ -366,14 +396,16 @@ async def redirect_with_password(code: str, request: Request, password: str = Fo
         user_agent = request.headers.get('User-Agent')
         referrer = request.headers.get('Referer')
         
-        # Fire and forget click logging
+        # Fire and forget click logging (use composite document_id)
         import asyncio
         asyncio.create_task(analytics_service.log_click(
-            code=code,
+            code=document_id,  # Use composite ID for analytics
             ip=client_ip,
             user_agent=user_agent,
             referrer=referrer
         ))
+        
+        logger.info(f"Password verified, redirecting {document_id} to {link_data['long_url']}")
         
         # Redirect to original URL
         return RedirectResponse(

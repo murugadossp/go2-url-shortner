@@ -16,16 +16,64 @@
     "rewrites": [
       {
         "source": "/api/**",
-        "function": "api"
+        "destination": "https://go2-api-asia-south1-run.app/api"
+      },
+      {
+        "source": "/admin/**",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/dashboard/**",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/analytics/**",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/**",
+        "destination": "https://go2-api-asia-south1-run.app/**"
+      }
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
       },
       {
         "source": "**",
-        "destination": "/index.html"
+        "headers": [
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "X-Frame-Options",
+            "value": "DENY"
+          },
+          {
+            "key": "X-XSS-Protection",
+            "value": "1; mode=block"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://www.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://go2-api-asia-south1-run.app https://identitytoolkit.googleapis.com https://securetoken.googleapis.com; frame-src https://www.google.com;"
+          }
+        ]
       }
     ]
-  },
-  "functions": {
-    "source": "apps/api",
-    "runtime": "python39"
   }
 }

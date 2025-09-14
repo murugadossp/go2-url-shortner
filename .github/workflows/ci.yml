@@ -353,6 +353,16 @@ jobs:
         cache: 'npm'
         cache-dependency-path: apps/web/package-lock.json
     
+    - name: Set up Google Cloud CLI
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        export_default_credentials: true
+    
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker
+    
     - name: Install frontend dependencies
       working-directory: apps/web
       run: npm ci
@@ -362,24 +372,84 @@ jobs:
       run: npm run build
       env:
         NEXT_PUBLIC_API_URL: ${{ secrets.PRODUCTION_API_URL }}
-        NEXT_PUBLIC_FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+        NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
     
-    - name: Build Docker image for API
+    - name: Build and push Docker image
       working-directory: apps/api
       run: |
-        docker build -t go2-api:${{ github.sha }} .
-        docker tag go2-api:${{ github.sha }} go2-api:latest
+        docker build -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/go2-api:${{ github.sha }} .
+        docker tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/go2-api:${{ github.sha }} gcr.io/${{ secrets.GCP_PROJECT_ID }}/go2-api:latest
+        docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/go2-api:${{ github.sha }}
+        docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/go2-api:latest
     
-    # Add deployment steps here based on your deployment strategy
-    # For example, deploy to Google Cloud Run, AWS ECS, etc.
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy go2-api \
+          --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/go2-api:${{ github.sha }} \
+          --platform managed \
+          --region asia-south1 \
+          --allow-unauthenticated \
+          --service-account go2-api-sa@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+          --port 8080 \
+          --memory 2Gi \
+          --cpu 2 \
+          --min-instances 0 \
+          --max-instances 100 \
+          --concurrency 1000 \
+          --timeout 300 \
+          --set-env-vars ENVIRONMENT=production,FIREBASE_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }} \
+          --set-secrets FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest \
+          --set-secrets GOOGLE_SAFE_BROWSING_API_KEY=safe-browsing-api-key:latest \
+          --set-secrets SENDGRID_API_KEY=sendgrid-api-key:latest \
+          --quiet
+    
+    - name: Test Cloud Run deployment
+      run: |
+        CLOUD_RUN_URL=$(gcloud run services describe go2-api --region asia-south1 --format 'value(status.url)')
+        curl -f "$CLOUD_RUN_URL/health"
+    
+    - name: Install Firebase CLI
+      run: npm install -g firebase-tools
+    
+    - name: Deploy to Firebase Hosting
+      working-directory: apps/web
+      run: |
+        firebase deploy --only hosting --non-interactive --token ${{ secrets.FIREBASE_TOKEN }}
+      env:
+        FIREBASE_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    
+    - name: Run smoke tests
+      run: |
+        # Test each domain
+        for domain in go2.video go2.tools go2.reviews; do
+          echo "Testing https://$domain/health..."
+          curl -f "https://$domain/health" || echo "Warning: $domain may not be ready yet"
+        done
+        
+        # Test link creation
+        RESPONSE=$(curl -s -X POST "https://go2.video/api/links/shorten" \
+          -H "Content-Type: application/json" \
+          -d '{"long_url": "https://example.com", "base_domain": "go2.video"}')
+        
+        if echo "$RESPONSE" | grep -q "short_url"; then
+          echo "✅ Link creation test passed"
+        else
+          echo "❌ Link creation test failed"
+          exit 1
+        fi
     
     - name: Archive production artifacts
       uses: actions/upload-artifact@v3
       with:
         name: production-build
         path: |
-          apps/web/.next/
-          apps/api/Dockerfile
+          apps/web/out/
+          deployment/
 
   # Notification
   notify:

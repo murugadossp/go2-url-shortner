@@ -1,0 +1,233 @@
+# Google Cloud Monitoring Configuration for Go2 URL Shortener
+
+# Custom Dashboards
+dashboards:
+  - name: go2-overview-dashboard
+    display_name: "Go2 URL Shortener - Overview"
+    widgets:
+      - title: "Request Rate"
+        type: line_chart
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: run.googleapis.com/request_count
+            
+      - title: "Error Rate"
+        type: line_chart
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: run.googleapis.com/request_count
+            filter: 'response_code_class!="2xx"'
+            
+      - title: "Response Latency"
+        type: line_chart
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: run.googleapis.com/request_latencies
+            
+      - title: "Instance Count"
+        type: line_chart
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: run.googleapis.com/container/instance_count
+            
+      - title: "Memory Utilization"
+        type: line_chart
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: run.googleapis.com/container/memory/utilizations
+            
+      - title: "CPU Utilization"
+        type: line_chart
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: run.googleapis.com/container/cpu/utilizations
+
+  - name: go2-business-dashboard
+    display_name: "Go2 URL Shortener - Business Metrics"
+    widgets:
+      - title: "Links Created"
+        type: scorecard
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: logging.googleapis.com/user/link_created
+            
+      - title: "Redirects Served"
+        type: line_chart
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: logging.googleapis.com/user/redirect_served
+            
+      - title: "QR Codes Generated"
+        type: line_chart
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: logging.googleapis.com/user/qr_generated
+            
+      - title: "Top Domains"
+        type: table
+        metrics:
+          - resource_type: cloud_run_revision
+            metric_type: logging.googleapis.com/user/domain_usage
+
+# Log-based Metrics
+log_metrics:
+  - name: link_created
+    description: "Count of links created"
+    filter: 'resource.type="cloud_run_revision" "link created successfully"'
+    metric_descriptor:
+      metric_kind: CUMULATIVE
+      value_type: INT64
+      
+  - name: redirect_served
+    description: "Count of redirects served"
+    filter: 'resource.type="cloud_run_revision" "redirect successful"'
+    metric_descriptor:
+      metric_kind: CUMULATIVE
+      value_type: INT64
+      
+  - name: qr_generated
+    description: "Count of QR codes generated"
+    filter: 'resource.type="cloud_run_revision" "QR code generated"'
+    metric_descriptor:
+      metric_kind: CUMULATIVE
+      value_type: INT64
+      
+  - name: safety_violations
+    description: "Count of safety violations"
+    filter: 'resource.type="cloud_run_revision" "safety violation"'
+    metric_descriptor:
+      metric_kind: CUMULATIVE
+      value_type: INT64
+      
+  - name: domain_usage
+    description: "Usage by domain"
+    filter: 'resource.type="cloud_run_revision" "link created" jsonPayload.base_domain!=""'
+    label_extractors:
+      domain: 'EXTRACT(jsonPayload.base_domain)'
+    metric_descriptor:
+      metric_kind: CUMULATIVE
+      value_type: INT64
+
+# Alerting Policies
+alerting_policies:
+  - display_name: "High Error Rate"
+    conditions:
+      - display_name: "Error rate > 5%"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" resource.label.service_name="go2-api"'
+          comparison: COMPARISON_GREATER_THAN
+          threshold_value: 0.05
+          duration: 300s
+          aggregations:
+            - alignment_period: 60s
+              per_series_aligner: ALIGN_RATE
+              cross_series_reducer: REDUCE_MEAN
+    notification_channels: []
+    alert_strategy:
+      auto_close: 86400s
+      
+  - display_name: "High Latency"
+    conditions:
+      - display_name: "95th percentile latency > 2s"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" resource.label.service_name="go2-api"'
+          comparison: COMPARISON_GREATER_THAN
+          threshold_value: 2000
+          duration: 300s
+          aggregations:
+            - alignment_period: 60s
+              per_series_aligner: ALIGN_DELTA
+              cross_series_reducer: REDUCE_PERCENTILE_95
+    notification_channels: []
+    
+  - display_name: "Low Availability"
+    conditions:
+      - display_name: "Availability < 99%"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" resource.label.service_name="go2-api"'
+          comparison: COMPARISON_LESS_THAN
+          threshold_value: 0.99
+          duration: 600s
+    notification_channels: []
+    
+  - display_name: "High Safety Violations"
+    conditions:
+      - display_name: "Safety violations > 10/min"
+        condition_threshold:
+          filter: 'metric.type="logging.googleapis.com/user/safety_violations"'
+          comparison: COMPARISON_GREATER_THAN
+          threshold_value: 10
+          duration: 300s
+          aggregations:
+            - alignment_period: 60s
+              per_series_aligner: ALIGN_RATE
+    notification_channels: []
+    
+  - display_name: "Instance Scaling Issues"
+    conditions:
+      - display_name: "Instance count > 80"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" resource.label.service_name="go2-api"'
+          comparison: COMPARISON_GREATER_THAN
+          threshold_value: 80
+          duration: 300s
+    notification_channels: []
+
+# Uptime Checks
+uptime_checks:
+  - display_name: "Go2 Video Health Check"
+    monitored_resource:
+      type: uptime_url
+      labels:
+        host: go2.video
+    http_check:
+      path: /health
+      port: 443
+      use_ssl: true
+    period: 60s
+    timeout: 10s
+    
+  - display_name: "Go2 Tools Health Check"
+    monitored_resource:
+      type: uptime_url
+      labels:
+        host: go2.tools
+    http_check:
+      path: /health
+      port: 443
+      use_ssl: true
+    period: 60s
+    timeout: 10s
+    
+  - display_name: "Go2 Reviews Health Check"
+    monitored_resource:
+      type: uptime_url
+      labels:
+        host: go2.reviews
+    http_check:
+      path: /health
+      port: 443
+      use_ssl: true
+    period: 60s
+    timeout: 10s
+
+# SLO Configuration
+slos:
+  - display_name: "API Availability SLO"
+    service_level_indicator:
+      request_based:
+        good_total_ratio:
+          good_service_filter: 'resource.type="cloud_run_revision" response_code_class="2xx"'
+          total_service_filter: 'resource.type="cloud_run_revision"'
+    goal: 0.999  # 99.9% availability
+    rolling_period: 2592000s  # 30 days
+    
+  - display_name: "API Latency SLO"
+    service_level_indicator:
+      request_based:
+        distribution_cut:
+          distribution_filter: 'resource.type="cloud_run_revision" metric.type="run.googleapis.com/request_latencies"'
+          range:
+            max: 1000  # 1 second
+    goal: 0.95  # 95% of requests under 1s
+    rolling_period: 2592000s  # 30 days

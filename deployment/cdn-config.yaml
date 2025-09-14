@@ -1,0 +1,141 @@
+# Cloud CDN Configuration for Go2 URL Shortener
+# This configuration optimizes caching for different content types
+
+# Backend Service Configuration
+backend_service:
+  name: go2-backend
+  enable_cdn: true
+  cache_mode: CACHE_ALL_STATIC
+  default_ttl: 3600  # 1 hour
+  max_ttl: 86400     # 24 hours
+  client_ttl: 3600   # 1 hour
+  
+  # Cache key policy
+  cache_key_policy:
+    include_host: true
+    include_protocol: true
+    include_query_string: false
+    query_string_whitelist: []
+    
+  # Custom cache rules
+  cache_rules:
+    # Static assets - long cache
+    - match_rule:
+        path_pattern: "*.{js,css,png,jpg,jpeg,gif,ico,svg,woff,woff2,ttf,eot}"
+      cache_ttl: 31536000  # 1 year
+      
+    # API responses - short cache
+    - match_rule:
+        path_pattern: "/api/*"
+      cache_ttl: 300  # 5 minutes
+      
+    # QR codes - medium cache
+    - match_rule:
+        path_pattern: "/api/qr/*"
+      cache_ttl: 86400  # 24 hours
+      
+    # Health checks - no cache
+    - match_rule:
+        path_pattern: "/health"
+      cache_ttl: 0
+      
+    # Redirects - short cache
+    - match_rule:
+        path_pattern: "/{code}"
+      cache_ttl: 300  # 5 minutes
+
+# Load Balancer Configuration
+load_balancer:
+  name: go2-lb
+  
+  # URL Map
+  url_map:
+    default_service: go2-backend
+    
+    # Path matchers
+    path_matchers:
+      - name: api-matcher
+        path_rules:
+          - paths: ["/api/*"]
+            service: go2-backend
+            
+      - name: static-matcher
+        path_rules:
+          - paths: ["*.js", "*.css", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.svg", "*.woff", "*.woff2", "*.ttf", "*.eot"]
+            service: go2-backend
+            
+  # SSL Configuration
+  ssl_certificates:
+    - name: go2-ssl-cert
+      domains:
+        - go2.video
+        - go2.tools
+        - go2.reviews
+        - www.go2.video
+        - www.go2.tools
+        - www.go2.reviews
+
+# Security Configuration
+security:
+  # Cloud Armor policy
+  security_policy:
+    name: go2-security-policy
+    rules:
+      # Rate limiting
+      - priority: 1000
+        match:
+          expr: "true"
+        action: rate_based_ban
+        rate_limit_options:
+          conform_action: allow
+          exceed_action: deny_429
+          enforce_on_key: IP
+          rate_limit_threshold:
+            count: 100
+            interval_sec: 60
+          ban_duration_sec: 600
+          
+      # Block common attack patterns
+      - priority: 2000
+        match:
+          expr: "request.path.matches('(?i)\\.(php|asp|aspx|jsp)$')"
+        action: deny_403
+        
+      # Allow legitimate traffic
+      - priority: 2147483647
+        match:
+          expr: "true"
+        action: allow
+
+# Monitoring Configuration
+monitoring:
+  # Custom metrics
+  metrics:
+    - name: redirect_count
+      filter: 'resource.type="cloud_run_revision" "redirect successful"'
+      
+    - name: error_rate
+      filter: 'resource.type="cloud_run_revision" severity>=ERROR'
+      
+    - name: response_time
+      filter: 'resource.type="cloud_run_revision" "request completed"'
+      
+  # Alerting policies
+  alerts:
+    - name: high_error_rate
+      condition:
+        display_name: "Error rate > 5%"
+        threshold_value: 0.05
+        duration: 300s
+        
+    - name: high_latency
+      condition:
+        display_name: "95th percentile latency > 2s"
+        threshold_value: 2000
+        duration: 300s
+        
+    - name: low_availability
+      condition:
+        display_name: "Availability < 99%"
+        threshold_value: 0.99
+        duration: 600s

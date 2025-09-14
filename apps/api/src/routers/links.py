@@ -27,6 +27,7 @@ from ..services.safety_service import SafetyService, SafetyError
 from ..services.analytics_service import analytics_service
 from ..services.user_service import user_service
 from ..utils.auth import get_current_user, require_auth, require_admin, get_user_id
+from ..utils.domain_utils import get_base_domain_from_request, get_composite_document_id, get_short_url, is_valid_base_domain
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 import logging
@@ -146,14 +147,60 @@ async def increment_custom_code_usage(uid: str) -> None:
     """Increment user's custom code usage count"""
     await user_service.increment_custom_code_usage(uid)
 
-async def check_code_collision(code: str) -> bool:
-    """Check if a short code already exists"""
+async def check_code_collision(code: str, base_domain: str) -> bool:
+    """Check if a short code already exists for the given domain"""
     try:
-        link_ref = firebase_service.db.collection('links').document(code)
+        document_id = get_composite_document_id(base_domain, code)
+        link_ref = firebase_service.db.collection('links').document(document_id)
         return link_ref.get().exists
     except Exception as e:
-        logger.error(f"Error checking code collision: {e}")
+        logger.error(f"Error checking code collision for {base_domain}_{code}: {e}")
         return True  # Fail safe - assume collision
+
+
+async def find_link_across_domains(code: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """
+    Find a link by code across all domains.
+    Returns (link_data, domain) tuple or (None, None) if not found.
+    """
+    domains = ['go2.video', 'go2.tools', 'go2.reviews']
+    
+    for domain in domains:
+        try:
+            document_id = get_composite_document_id(domain, code)
+            link_ref = firebase_service.db.collection('links').document(document_id)
+            link_doc = link_ref.get()
+            
+            if link_doc.exists:
+                link_data = link_doc.to_dict()
+                link_data['_document_id'] = document_id  # Include document ID for updates
+                return link_data, domain
+        except Exception as e:
+            logger.error(f"Error searching for {code} in domain {domain}: {e}")
+            continue
+    
+    return None, None
+
+
+async def get_link_document_ref(code: str) -> tuple[Optional[Any], Optional[str], Optional[str]]:
+    """
+    Get Firestore document reference for a link by code.
+    Returns (document_ref, domain, document_id) tuple or (None, None, None) if not found.
+    """
+    domains = ['go2.video', 'go2.tools', 'go2.reviews']
+    
+    for domain in domains:
+        try:
+            document_id = get_composite_document_id(domain, code)
+            link_ref = firebase_service.db.collection('links').document(document_id)
+            
+            if link_ref.get().exists:
+                return link_ref, domain, document_id
+        except Exception as e:
+            logger.error(f"Error getting document ref for {code} in domain {domain}: {e}")
+            continue
+    
+    return None, None, None
 
 def suggest_alternative_codes(base_code: str, count: int = 3) -> List[str]:
     """Suggest alternative codes when collision occurs"""
@@ -223,12 +270,12 @@ async def create_short_link(
         # 5. Generate or validate short code
         if is_custom_code:
             code = request.custom_code
-            if await check_code_collision(code):
+            if await check_code_collision(code, request.base_domain):
                 suggestions = suggest_alternative_codes(code)
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
-                        "message": f"Custom code '{code}' is already taken",
+                        "message": f"Custom code '{code}' is already taken for domain '{request.base_domain}'",
                         "suggestions": suggestions
                     }
                 )
@@ -237,7 +284,7 @@ async def create_short_link(
             max_attempts = 10
             for _ in range(max_attempts):
                 code = generate_short_code()
-                if not await check_code_collision(code):
+                if not await check_code_collision(code, request.base_domain):
                     break
             else:
                 raise HTTPException(
@@ -283,11 +330,13 @@ async def create_short_link(
             is_custom_code=is_custom_code
         )
         
-        # 11. Save to Firestore (convert HttpUrl to string for Firestore compatibility)
+        # 11. Save to Firestore using composite document ID
         link_data = link_doc.model_dump()
         link_data['long_url'] = str(link_data['long_url'])  # Convert HttpUrl to string
         
-        link_ref = firebase_service.db.collection('links').document(code)
+        # Use composite document ID: {domain}_{code}
+        document_id = get_composite_document_id(request.base_domain, code)
+        link_ref = firebase_service.db.collection('links').document(document_id)
         link_ref.set(link_data)
         
         # 12. Increment custom code usage if applicable
@@ -295,15 +344,15 @@ async def create_short_link(
             await increment_custom_code_usage(get_user_id(current_user))
         
         # 13. Build response
-        short_url = f"https://{request.base_domain}/{code}"
+        short_url = get_short_url(request.base_domain, code)
         
-        # Construct full QR URL using the request's base URL
+        # Construct full QR URL using the composite document ID
         if http_request:
             api_base_url = f"{http_request.url.scheme}://{http_request.url.netloc}"
-            qr_url = f"{api_base_url}/api/qr/{code}"
+            qr_url = f"{api_base_url}/api/qr/{document_id}"
         else:
             # Fallback to relative URL
-            qr_url = f"/api/qr/{code}"
+            qr_url = f"/api/qr/{document_id}"
         
         return CreateLinkResponse(
             short_url=short_url,
@@ -336,17 +385,18 @@ async def update_link(
     Supports updating disabled status, expiration, and password.
     """
     try:
-        # Get link document
-        link_ref = firebase_service.db.collection('links').document(code)
-        link_doc = link_ref.get()
+        # Find link across all domains
+        link_data, domain = await find_link_across_domains(code)
         
-        if not link_doc.exists:
+        if not link_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Link not found"
             )
         
-        link_data = link_doc.to_dict()
+        # Get document reference for updates
+        document_id = link_data['_document_id']
+        link_ref = firebase_service.db.collection('links').document(document_id)
         
         # Check permissions (owner or admin)
         is_owner = link_data.get('owner_uid') == get_user_id(current_user)
@@ -399,17 +449,18 @@ async def delete_link(
     Delete a link (owner or admin only).
     """
     try:
-        # Get link document
-        link_ref = firebase_service.db.collection('links').document(code)
-        link_doc = link_ref.get()
+        # Find link across all domains
+        link_data, domain = await find_link_across_domains(code)
         
-        if not link_doc.exists:
+        if not link_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Link not found"
             )
         
-        link_data = link_doc.to_dict()
+        # Get document reference for deletion
+        document_id = link_data['_document_id']
+        link_ref = firebase_service.db.collection('links').document(document_id)
         
         # Check permissions (owner or admin)
         is_owner = link_data.get('owner_uid') == get_user_id(current_user)
@@ -772,17 +823,17 @@ async def get_link_stats(
     Public links can be viewed by anyone, private links require owner or admin access.
     """
     try:
-        # Get link document to check permissions
-        link_ref = firebase_service.db.collection('links').document(code)
-        link_doc = link_ref.get()
+        # Find link across all domains
+        link_data, domain = await find_link_across_domains(code)
         
-        if not link_doc.exists:
+        if not link_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Link not found"
             )
         
-        link_data = link_doc.to_dict()
+        # Use the composite document ID for analytics
+        document_id = link_data['_document_id']
         
         # Check permissions for private links
         owner_uid = link_data.get('owner_uid')
@@ -809,8 +860,8 @@ async def get_link_stats(
                 detail="Period must be one of: 7d, 30d, all"
             )
         
-        # Get statistics
-        stats = await analytics_service.get_stats(code, period)
+        # Get statistics using composite document ID
+        stats = await analytics_service.get_stats(document_id, period)
         return stats
         
     except HTTPException:
@@ -830,22 +881,28 @@ async def check_code_availability(code: str):
     Returns availability status and suggestions if taken.
     """
     try:
-        # Check if code exists
-        is_taken = await check_code_collision(code)
+        # Check if code exists across all domains
+        domains = ['go2.video', 'go2.tools', 'go2.reviews']
+        taken_domains = []
         
-        if is_taken:
+        for domain in domains:
+            if await check_code_collision(code, domain):
+                taken_domains.append(domain)
+        
+        if taken_domains:
             # Generate suggestions
             suggestions = suggest_alternative_codes(code, 3)
             return {
                 "available": False,
                 "suggestions": suggestions,
-                "message": f"Code '{code}' is already taken"
+                "message": f"Code '{code}' is already taken in domains: {', '.join(taken_domains)}",
+                "taken_domains": taken_domains
             }
         else:
             return {
                 "available": True,
                 "suggestions": [],
-                "message": f"Code '{code}' is available"
+                "message": f"Code '{code}' is available in all domains"
             }
             
     except Exception as e:
