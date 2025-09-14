@@ -7,6 +7,10 @@ import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Toast } from '@/components/ui/Toast';
 import { AdminNavButton } from '@/components/AdminNavButton';
+import { LinksList } from '@/components/LinksList';
+import { AnalyticsDashboard } from '@/components/AnalyticsDashboard';
+import { ClientOnly } from '@/components/ClientOnly';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { 
   Link as LinkIcon, 
   MousePointer, 
@@ -19,7 +23,8 @@ import {
   Sparkles,
   BarChart3,
   Clock,
-  CheckCircle
+  CheckCircle,
+  ArrowLeft
 } from 'lucide-react';
 
 export function UserDashboard() {
@@ -36,6 +41,8 @@ export function UserDashboard() {
   } = useUser();
   const [upgrading, setUpgrading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [currentView, setCurrentView] = useState<'overview' | 'links' | 'analytics'>('overview');
+  const [selectedLink, setSelectedLink] = useState<{ code: string; shortUrl: string } | null>(null);
 
   const handleUpgrade = async () => {
     setUpgrading(true);
@@ -49,6 +56,21 @@ export function UserDashboard() {
     } finally {
       setUpgrading(false);
     }
+  };
+
+  const handleViewAnalytics = (code: string, shortUrl: string) => {
+    setSelectedLink({ code, shortUrl });
+    setCurrentView('analytics');
+  };
+
+  const handleBackToLinks = () => {
+    setCurrentView('links');
+    setSelectedLink(null);
+  };
+
+  const handleBackToOverview = () => {
+    setCurrentView('overview');
+    setSelectedLink(null);
   };
 
   if (loading) {
@@ -71,26 +93,87 @@ export function UserDashboard() {
           />
         )}
 
-        {/* Compact Welcome Section */}
+        {/* Navigation Header */}
         <div className="relative">
           <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-cyan-500/10 rounded-2xl blur-xl"></div>
           <div className="relative backdrop-blur-xl bg-white/70 border border-white/20 rounded-2xl shadow-xl p-6">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg">
-                  <Sparkles className="h-5 w-5 text-white" />
+                  {currentView === 'analytics' ? (
+                    <BarChart3 className="h-5 w-5 text-white" />
+                  ) : currentView === 'links' ? (
+                    <LinkIcon className="h-5 w-5 text-white" />
+                  ) : (
+                    <Sparkles className="h-5 w-5 text-white" />
+                  )}
                 </div>
                 <div>
                   <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 via-blue-800 to-purple-800 bg-clip-text text-transparent">
-                    Welcome{profile ? `, ${profile.display_name.split(' ')[0]}` : ''}!
+                    {currentView === 'analytics' ? 'Link Analytics' : 
+                     currentView === 'links' ? 'My Links' : 
+                     `Welcome${profile ? `, ${profile.display_name.split(' ')[0]}` : ''}!`}
                   </h1>
                   <p className="text-sm text-gray-600">
-                    {user ? 'Your dashboard overview' : 'Sign in to access your dashboard'}
+                    {currentView === 'analytics' ? 'Detailed analytics for your link' : 
+                     currentView === 'links' ? 'Manage your short links' : 
+                     user ? 'Your dashboard overview' : 'Sign in to access your dashboard'}
                   </p>
                 </div>
               </div>
               
               <div className="flex items-center gap-3">
+                {/* Navigation buttons */}
+                {currentView === 'analytics' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleBackToLinks}
+                    className="flex items-center gap-2"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Back to Links
+                  </Button>
+                )}
+                
+                {currentView !== 'overview' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBackToOverview}
+                    className="flex items-center gap-2"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Dashboard
+                  </Button>
+                )}
+
+                {/* Tab Navigation */}
+                {user && currentView === 'overview' && (
+                  <div className="flex bg-white/50 rounded-lg p-1 border border-white/30">
+                    <button
+                      onClick={() => setCurrentView('overview')}
+                      className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                        currentView === 'overview'
+                          ? 'bg-blue-500 text-white shadow-md'
+                          : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Overview
+                    </button>
+                    <button
+                      onClick={() => setCurrentView('links')}
+                      className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                        currentView === 'links'
+                          ? 'bg-blue-500 text-white shadow-md'
+                          : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      My Links
+                    </button>
+                  </div>
+                )}
+                
                 {/* Admin button */}
                 <AdminNavButton />
                 
@@ -110,7 +193,59 @@ export function UserDashboard() {
           </div>
         </div>
 
-        {user && profile && usageStats && (
+        {/* Content Sections */}
+        {currentView === 'analytics' && selectedLink ? (
+          <ErrorBoundary>
+            <div className="mb-6">
+              <div className="bg-white/50 backdrop-blur-sm rounded-lg p-4 border border-white/20">
+                <p className="text-gray-600">
+                  Detailed analytics for <span className="font-mono text-blue-600">{selectedLink.shortUrl}</span>
+                </p>
+              </div>
+            </div>
+            <ClientOnly fallback={
+              <div className="space-y-6">
+                <div className="animate-pulse space-y-6">
+                  <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    {[...Array(4)].map((_, i) => (
+                      <div key={i} className="h-24 bg-gray-200 rounded"></div>
+                    ))}
+                  </div>
+                  <div className="h-64 bg-gray-200 rounded"></div>
+                </div>
+              </div>
+            }>
+              <AnalyticsDashboard 
+                code={selectedLink.code} 
+                shortUrl={selectedLink.shortUrl}
+              />
+            </ClientOnly>
+          </ErrorBoundary>
+        ) : currentView === 'links' ? (
+          <ErrorBoundary>
+            {user ? (
+              <ClientOnly fallback={
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xl font-semibold text-gray-900">My Links</h2>
+                  </div>
+                  <div className="space-y-3">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="animate-pulse bg-gray-100 rounded-lg h-24"></div>
+                    ))}
+                  </div>
+                </div>
+              }>
+                <LinksList onViewAnalytics={handleViewAnalytics} />
+              </ClientOnly>
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-gray-600 mb-4">Please sign in to view your links</p>
+              </div>
+            )}
+          </ErrorBoundary>
+        ) : user && profile && usageStats ? (
           <>
             {/* Stats Overview Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -311,10 +446,10 @@ export function UserDashboard() {
               </div>
             )}
         </>
-      )}
+        ) : null}
 
           {/* Plan Comparison */}
-          {planLimits && (
+          {planLimits && currentView === 'overview' && (
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-pink-500/10 rounded-3xl blur-xl"></div>
               <div className="relative backdrop-blur-xl bg-white/70 border border-white/20 rounded-3xl shadow-2xl p-8">
@@ -454,7 +589,7 @@ export function UserDashboard() {
           )}
 
         {/* Anonymous User Prompt */}
-        {!user && (
+        {!user && currentView === 'overview' && (
           <div className="relative">
             <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-cyan-500/10 rounded-3xl blur-xl"></div>
             <div className="relative backdrop-blur-xl bg-white/70 border border-white/20 rounded-3xl shadow-2xl p-12 text-center">

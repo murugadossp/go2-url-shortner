@@ -441,22 +441,63 @@ async def delete_link(
 async def list_user_links(
     current_user: Dict[str, Any] = Depends(require_auth),
     limit: int = 50,
-    offset: int = 0
+    offset: int = 0,
+    search: Optional[str] = None,
+    sort_by: str = 'created_at',
+    order: str = 'desc',
+    filter_status: Optional[str] = None,
+    filter_type: Optional[str] = None
 ):
     """
-    List links for the authenticated user.
+    List links for the authenticated user with search, sort, and filter capabilities.
+    
+    Parameters:
+    - search: Search text to match against code, long_url, or base_domain
+    - sort_by: Field to sort by ('created_at', 'clicks', 'expires_at', 'code')
+    - order: Sort order ('asc' or 'desc')
+    - filter_status: Filter by status ('active', 'expired', 'disabled')
+    - filter_type: Filter by type ('custom', 'generated')
     """
     try:
         uid = get_user_id(current_user)
         
-        # Query user's links
+        # Start with base query
         links_ref = firebase_service.db.collection('links')
         query = links_ref.where(filter=FieldFilter('owner_uid', '==', uid))
-        query = query.order_by('created_at', direction=firestore.Query.DESCENDING)
+        
+        # Apply status filter
+        if filter_status == 'disabled':
+            query = query.where(filter=FieldFilter('disabled', '==', True))
+        elif filter_status == 'active':
+            query = query.where(filter=FieldFilter('disabled', '==', False))
+        
+        # Apply type filter
+        if filter_type == 'custom':
+            query = query.where(filter=FieldFilter('is_custom_code', '==', True))
+        elif filter_type == 'generated':
+            query = query.where(filter=FieldFilter('is_custom_code', '==', False))
+        
+        # For sorting that requires database queries, apply appropriate order_by
+        # For in-memory sorting (clicks, code), we'll fetch with default order and sort after
+        if sort_by in ['created_at']:
+            sort_direction = firestore.Query.DESCENDING if order == 'desc' else firestore.Query.ASCENDING
+            query = query.order_by('created_at', direction=sort_direction)
+        elif sort_by == 'expires_at':
+            # For expires_at sorting, we need to handle this in-memory since not all links have expiry
+            query = query.order_by('created_at', direction=firestore.Query.DESCENDING)
+        else:
+            # For clicks and code sorting, fetch with default created_at order and sort in-memory
+            query = query.order_by('created_at', direction=firestore.Query.DESCENDING)
+        
+        # Apply pagination
         query = query.limit(limit).offset(offset)
         
+        # Fetch documents
+        docs = list(query.stream())
+        
+        # Convert to LinkListResponse objects and get analytics
         links = []
-        for doc in query.stream():
+        for doc in docs:
             link_data = doc.to_dict()
             
             # Get click count from analytics service
@@ -467,7 +508,7 @@ async def list_user_links(
                 logger.warning(f"Failed to get click count for {doc.id}: {e}")
                 total_clicks = 0
             
-            links.append(LinkListResponse(
+            link = LinkListResponse(
                 code=doc.id,
                 long_url=link_data['long_url'],
                 base_domain=link_data['base_domain'],
@@ -477,7 +518,47 @@ async def list_user_links(
                 total_clicks=total_clicks,
                 owner_uid=link_data.get('owner_uid'),
                 is_custom_code=link_data.get('is_custom_code', False)
-            ))
+            )
+            
+            links.append(link)
+        
+        # Apply search filter in-memory (since Firestore doesn't support full-text search well)
+        if search:
+            search_lower = search.lower()
+            links = [
+                link for link in links 
+                if (search_lower in link.code.lower() or 
+                    search_lower in link.long_url.lower() or 
+                    search_lower in link.base_domain.lower())
+            ]
+        
+        # Apply in-memory sorting for fields that can't be handled by Firestore
+        if sort_by == 'clicks':
+            reverse_sort = order == 'desc'
+            links.sort(key=lambda x: x.total_clicks, reverse=reverse_sort)
+        elif sort_by == 'code':
+            reverse_sort = order == 'desc'
+            links.sort(key=lambda x: x.code.lower(), reverse=reverse_sort)
+        elif sort_by == 'expires_at':
+            # Sort by expiration date, handling None values (put them at the end)
+            reverse_sort = order == 'desc'
+            def expires_sort_key(link):
+                if not link.expires_at:
+                    # Put links without expiry at the end
+                    return datetime.max if not reverse_sort else datetime.min
+                try:
+                    return datetime.fromisoformat(link.expires_at.replace('Z', '+00:00'))
+                except:
+                    return datetime.max if not reverse_sort else datetime.min
+            links.sort(key=expires_sort_key, reverse=reverse_sort)
+        
+        # Apply expired filter in-memory (since it requires date comparison)
+        if filter_status == 'expired':
+            now = datetime.utcnow()
+            links = [
+                link for link in links 
+                if link.expires_at and datetime.fromisoformat(link.expires_at.replace('Z', '+00:00')) < now
+            ]
         
         return links
         

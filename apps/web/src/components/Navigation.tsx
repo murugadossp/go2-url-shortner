@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation'; // Import useRouter
 import { Menu, Home, BarChart3, User, Settings, Link as LinkIcon } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAdminStatus } from '@/hooks/useAdminStatus';
@@ -16,6 +17,7 @@ export function Navigation({ currentPage = 'home', onNavigate }: NavigationProps
   const { user } = useAuth();
   const { isAdmin } = useAdminStatus();
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const router = useRouter(); // Initialize useRouter
 
   // Handle hydration
   useEffect(() => {
@@ -61,24 +63,22 @@ export function Navigation({ currentPage = 'home', onNavigate }: NavigationProps
       if (onNavigate) {
         onNavigate(pageId);
       } else {
-        // Default navigation behavior - only run on client side
-        if (typeof window !== 'undefined') {
-          switch (pageId) {
-            case 'home':
-              window.location.href = '/';
-              break;
-            case 'dashboard':
-              window.location.href = '/dashboard';
-              break;
-            case 'profile':
-              window.location.href = '/profile';
-              break;
-            case 'admin':
-              window.location.href = '/admin';
-              break;
-            default:
-              console.warn('Unknown page:', pageId);
-          }
+        // Default navigation behavior using Next.js router
+        switch (pageId) {
+          case 'home':
+            router.push('/');
+            break;
+          case 'dashboard':
+            router.push('/dashboard');
+            break;
+          case 'profile':
+            router.push('/profile');
+            break;
+          case 'admin':
+            router.push('/admin');
+            break;
+          default:
+            console.warn('Unknown page:', pageId);
         }
       }
     } catch (error) {
