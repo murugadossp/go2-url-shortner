@@ -1,0 +1,6 @@
+/.vscode
+/node_modules
+/package-lock.json
+.pytest_cache/
+.env
+go2-url-shortner-firebase-adminsdk-fbsvc-5e27a7f632.json

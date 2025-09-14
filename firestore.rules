@@ -1,0 +1,88 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.admin == true;
+    }
+    
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+    
+    function isLinkOwner(code) {
+      return isAuthenticated() && 
+             request.auth.uid == get(/databases/$(database)/documents/links/$(code)).data.owner_uid;
+    }
+    
+    // Links collection - core URL shortening data
+    match /links/{code} {
+      // Allow public read access for redirects (anyone can access short links)
+      allow read: if true;
+      
+      // Allow creation for authenticated users or anonymous (for demo purposes)
+      allow create: if true;
+      
+      // Allow updates only by link owner or admin
+      allow update: if isLinkOwner(code) || isAdmin();
+      
+      // Allow deletion only by link owner or admin
+      allow delete: if isLinkOwner(code) || isAdmin();
+      
+      // Clicks subcollection - analytics data
+      match /clicks/{clickId} {
+        // Allow read only by link owner or admin
+        allow read: if isLinkOwner(code) || isAdmin();
+        
+        // No client-side writes allowed - server-side only via Admin SDK
+        allow write: if false;
+      }
+    }
+    
+    // Users collection - user profiles and plan information
+    match /users/{uid} {
+      // Users can read and write their own profile, admins can access all
+      allow read, write: if isOwner(uid) || isAdmin();
+      
+      // Prevent users from setting admin claims
+      allow update: if isOwner(uid) && 
+                   (!('is_admin' in request.resource.data) || 
+                    request.resource.data.is_admin == resource.data.is_admin);
+    }
+    
+    // Config collection - system configuration
+    match /config/{document} {
+      // Allow public read access for base domains and settings
+      allow read: if true;
+      
+      // Only admins can modify configuration
+      allow write: if isAdmin();
+    }
+    
+    // Admin collection - administrative data and logs
+    match /admin/{document} {
+      // Only admins can access administrative data
+      allow read, write: if isAdmin();
+      
+      // Audit logs subcollection
+      match /audit_logs/{logId} {
+        allow read, write: if isAdmin();
+      }
+    }
+    
+    // Reports collection - generated reports and analytics
+    match /reports/{reportId} {
+      // Users can read reports they own, admins can read all
+      allow read: if isAuthenticated() && 
+                 (resource.data.owner_uid == request.auth.uid || isAdmin());
+      
+      // Only server-side creation via Admin SDK
+      allow write: if false;
+    }
+  }
+}

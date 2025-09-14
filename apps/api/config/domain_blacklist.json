@@ -1,0 +1,32 @@
+{
+  "domains": [
+    "malware.com",
+    "phishing.net",
+    "spam.org",
+    "adult.xxx",
+    "casino.bet",
+    "illegal.site",
+    "scam.info",
+    "fraud.biz",
+    "virus.download",
+    "trojan.exe",
+    "spyware.install",
+    "adware.popup"
+  ],
+  "keywords": [
+    "malware",
+    "phishing",
+    "scam",
+    "fraud",
+    "illegal",
+    "piracy",
+    "warez",
+    "crack",
+    "keygen",
+    "virus",
+    "trojan",
+    "spyware",
+    "adware",
+    "ransomware"
+  ]
+}
